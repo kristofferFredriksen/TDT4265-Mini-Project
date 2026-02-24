@@ -1,8 +1,8 @@
 path: ./data/Poles2025/Road_poles_Iphone/
 
-train: images/Train/images/train
-val: images/Val/images/val
-test: images/Test/images/test
+train: Train.txt
+val: Validation.txt
+test: Test.txt
 
 nc: 1
 names: ['pole']
