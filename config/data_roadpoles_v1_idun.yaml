@@ -1,0 +1,7 @@
+path: /data/Poles2025/roadpoles_v1
+train: train/images
+val: valid/images
+test: test/images
+
+nc: 1
+names: ['pole']

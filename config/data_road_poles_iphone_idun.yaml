@@ -1,0 +1,7 @@
+path: /data/Poles2025/Road_poles_iPhone
+train: images/Train/train
+val: images/Validation/val
+test: images/Test/test
+
+nc: 1
+names: ['pole']
