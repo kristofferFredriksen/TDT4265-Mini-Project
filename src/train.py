@@ -1,7 +1,8 @@
 from ultralytics import YOLO
 import torch as t
 
-device = t.device("cuda" if t.cuda.is_available() else "cpu")
+device = "0" if t.cuda.is_available() and t.cuda.device_count() > 0 else "cpu"
+print("Using device:", device)
 
 #Loading pretrained YOLO on COCO dataset
 print("Loading pretrained YOLO model...")
