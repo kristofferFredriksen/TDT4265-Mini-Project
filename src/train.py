@@ -10,5 +10,5 @@ model = YOLO("yolo26n.pt")
 print("Model loaded successfully.")
 
 print ("Starting training...")
-results = model.train(data = "./config/data_road_poles_iphone.yaml", epochs=20, batch = 16, imgsz = 640, device=device, verbose = True)
+results = model.train(data = "./config/data_roadpoles_v1.yaml", epochs=20, batch = 16, imgsz = 640, device=device, verbose = True)
 print("Training completed.")
