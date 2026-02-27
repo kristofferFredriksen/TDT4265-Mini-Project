@@ -1,0 +1,11 @@
+# YOLO training parameters
+
+epochs: 100
+lr: 0.001
+batch_size: 16
+img_size: 640
+num_classes: 1
+verbose: True
+
+# Paths
+data_path: "./config/data_roadpoles_v1_idun.yaml"
