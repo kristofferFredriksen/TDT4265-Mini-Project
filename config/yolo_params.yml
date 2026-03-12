@@ -6,6 +6,7 @@ batch_size: 16
 img_size: 640
 num_classes: 1
 verbose: True
+export_test_predictions: True
 
 # Paths
-data_path: "./config/data_roadpoles_v1_idun.yaml"
+data_path: "./config/data_roadpoles_v1_cybele.yaml"
