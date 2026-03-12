@@ -1,12 +1,10 @@
 #!/bin/sh
 #SBATCH --account=ie-idi
-#SBATCH --job_name=tdt4265_yolo_first_run
 #SBATCH --partition=GPUQ
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
-#SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
-#SBATCH --time=0-04:00:00
+#SBATCH --time=0-01:00:00
 #SBATCH --output=slurm-%j.out
 #SBATCH --error=slim-%j.err
 #SBATCH --mail-user=kristotf@stud.ntnu.no
