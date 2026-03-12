@@ -1,8 +1,11 @@
 import argparse
+import csv
 import json
 import logging
+import re
 import socket
 import time
+import zipfile
 from pathlib import Path
 
 import torch as t
@@ -13,6 +16,8 @@ from ultralytics import YOLO
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PARAMS_PATH = REPO_ROOT / "config" / "yolo_params.yml"
 DEFAULT_MODEL = "yolo26n.pt"
+RUNS_DIR = REPO_ROOT / "runs"
+EXPERIMENT_REGISTRY_PATH = RUNS_DIR / "experiment_registry.csv"
 
 
 def parse_args():
@@ -41,12 +46,31 @@ def resolve_path(path_value, base_dir):
     return (base_dir / path).resolve()
 
 
+def resolve_existing_path(path_value, *base_dirs):
+    path = Path(path_value).expanduser()
+    if path.is_absolute():
+        return path
+
+    for base_dir in base_dirs:
+        candidate = (base_dir / path).resolve()
+        if candidate.exists():
+            return candidate
+
+    return (base_dirs[0] / path).resolve()
+
+
 def load_yaml(path):
     with path.open("r", encoding="utf-8") as file:
         return yaml.safe_load(file)
 
 
+def save_yaml(path, data):
+    with path.open("w", encoding="utf-8") as file:
+        yaml.safe_dump(data, file, sort_keys=False)
+
+
 def setup_logger(run_dir):
+    run_dir.mkdir(parents=True, exist_ok=True)
     log_file = run_dir / "python.log"
     logger = logging.getLogger("train")
     logger.setLevel(logging.INFO)
@@ -105,34 +129,188 @@ def read_dataset_name(data_config):
     return "unknown_dataset"
 
 
+def sanitize_component(value):
+    return re.sub(r"[^a-zA-Z0-9._-]+", "-", str(value)).strip("-") or "na"
+
+
+def format_float_component(value):
+    return format(float(value), ".0e").replace("+0", "").replace("+", "")
+
+
+def build_run_name(dataset_name, params, timestamp):
+    model_name = Path(params.get("model", DEFAULT_MODEL)).stem
+    train_params = params["train"]
+    components = [
+        sanitize_component(dataset_name),
+        sanitize_component(model_name),
+        f"img{train_params['imgsz']}",
+        f"ep{train_params['epochs']}",
+        f"bs{train_params['batch']}",
+    ]
+    if train_params.get("lr0") is not None:
+        components.append(f"lr{format_float_component(train_params['lr0'])}")
+    run_tag = params.get("run_tag")
+    if run_tag:
+        components.append(sanitize_component(run_tag))
+    components.append(timestamp)
+    return "__".join(components)
+
+
 def resolve_dataset_split(data_config_path, data_config, split_name):
-    dataset_root = resolve_path(data_config["path"], data_config_path.parent)
+    dataset_root = resolve_existing_path(
+        data_config["path"],
+        REPO_ROOT,
+        data_config_path.parent,
+    )
     split_path = Path(data_config[split_name])
     if split_path.is_absolute():
         return split_path
     return (dataset_root / split_path).resolve()
 
 
+def split_has_labels(split_images_dir):
+    split_dir = split_images_dir.parent
+    labels_dir = split_dir / "labels"
+    return labels_dir.exists() and any(labels_dir.glob("*.txt"))
+
+
+def read_best_validation_metrics(run_dir):
+    results_csv_path = run_dir / "results.csv"
+    if not results_csv_path.exists():
+        return None
+
+    with results_csv_path.open("r", encoding="utf-8", newline="") as file:
+        reader = csv.DictReader(file)
+        rows = list(reader)
+
+    if not rows:
+        return None
+
+    def parse_metric(row, key, default=-1.0):
+        value = row.get(key, "")
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    best_row = max(rows, key=lambda row: parse_metric(row, "fitness"))
+    return {
+        "epoch": parse_metric(best_row, "epoch", default=None),
+        "precision": parse_metric(best_row, "metrics/precision(B)", default=None),
+        "recall": parse_metric(best_row, "metrics/recall(B)", default=None),
+        "mAP50": parse_metric(best_row, "metrics/mAP50(B)", default=None),
+        "mAP50-95": parse_metric(best_row, "metrics/mAP50-95(B)", default=None),
+        "fitness": parse_metric(best_row, "fitness", default=None),
+    }
+
+
+def zip_submission(predictions_dir):
+    labels_dir = predictions_dir / "labels"
+    if not labels_dir.exists():
+        return None
+
+    zip_path = predictions_dir.with_suffix(".zip")
+    with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for label_file in sorted(labels_dir.glob("*.txt")):
+            archive.write(label_file, arcname=label_file.name)
+    return zip_path
+
+
+def append_experiment_registry(path, row):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = list(row.keys())
+    write_header = not path.exists()
+
+    with path.open("a", encoding="utf-8", newline="") as file:
+        writer = csv.DictWriter(file, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        writer.writerow(row)
+
+
+def normalize_params(params):
+    model = params.get("model", DEFAULT_MODEL)
+    train_defaults = {
+        "epochs": params.get("epochs", 100),
+        "batch": params.get("batch_size", 16),
+        "imgsz": params.get("img_size", 640),
+        "lr0": params.get("lr", 0.001),
+        "patience": params.get("patience", 30),
+        "optimizer": params.get("optimizer", "auto"),
+        "weight_decay": params.get("weight_decay", 0.0005),
+        "seed": params.get("seed", 0),
+        "cos_lr": params.get("cos_lr", False),
+        "degrees": params.get("degrees", 0.0),
+        "translate": params.get("translate", 0.1),
+        "scale": params.get("scale", 0.5),
+        "shear": params.get("shear", 0.0),
+        "perspective": params.get("perspective", 0.0),
+        "flipud": params.get("flipud", 0.0),
+        "fliplr": params.get("fliplr", 0.5),
+        "mosaic": params.get("mosaic", 1.0),
+        "mixup": params.get("mixup", 0.0),
+        "copy_paste": params.get("copy_paste", 0.0),
+        "erasing": params.get("erasing", 0.4),
+        "hsv_h": params.get("hsv_h", 0.015),
+        "hsv_s": params.get("hsv_s", 0.7),
+        "hsv_v": params.get("hsv_v", 0.4),
+        "close_mosaic": params.get("close_mosaic", 10),
+        "verbose": params.get("verbose", True),
+    }
+    train_params = {**train_defaults, **params.get("train", {})}
+
+    val_defaults = {
+        "batch": train_params["batch"],
+        "imgsz": train_params["imgsz"],
+        "verbose": train_params.get("verbose", True),
+    }
+    val_params = {**val_defaults, **params.get("val", {})}
+
+    predict_defaults = {
+        "imgsz": train_params["imgsz"],
+        "conf": params.get("predict_conf", 0.25),
+        "iou": params.get("predict_iou", 0.7),
+        "verbose": train_params.get("verbose", True),
+    }
+    predict_params = {**predict_defaults, **params.get("predict", {})}
+
+    normalized = dict(params)
+    normalized["model"] = model
+    normalized["train"] = train_params
+    normalized["val"] = val_params
+    normalized["predict"] = predict_params
+    normalized["export_test_predictions"] = params.get("export_test_predictions", True)
+    return normalized
+
+
 def main():
     args = parse_args()
 
     params_path = resolve_path(args.params, REPO_ROOT)
-    params = load_yaml(params_path)
+    params = normalize_params(load_yaml(params_path))
 
     data_path_value = args.data if args.data is not None else params["data_path"]
-    data_config_path = resolve_path(data_path_value, params_path.parent)
+    data_config_path = resolve_existing_path(
+        data_path_value,
+        REPO_ROOT,
+        params_path.parent,
+    )
     data_config = load_yaml(data_config_path)
+
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
     run_timestamp = time.strftime("%Y%m%d-%H%M%S")
     dataset_name = read_dataset_name(data_config)
-    run_name = f"yolo_26n_{dataset_name}_{run_timestamp}"
-    run_dir = REPO_ROOT / "runs" / run_name
-    run_dir.mkdir(parents=True, exist_ok=False)
+    run_name = build_run_name(dataset_name, params, run_timestamp)
+    run_dir = RUNS_DIR / run_name
 
     logger = setup_logger(run_dir)
     logger.info("Run directory: %s", run_dir)
     logger.info("Parameter file: %s", params_path)
     logger.info("Data config file: %s", data_config_path)
+
+    save_yaml(run_dir / "params_snapshot.yml", params)
+    save_yaml(run_dir / "data_snapshot.yml", data_config)
 
     device = get_device()
     logger.info("Using device: %s", device)
@@ -144,6 +322,7 @@ def main():
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "params_path": str(params_path),
         "data_config_path": str(data_config_path),
+        "dataset_name": dataset_name,
         "dataset": to_builtin(data_config),
         "training_params": to_builtin(params),
         "device": device,
@@ -151,72 +330,109 @@ def main():
 
     metrics_summary = {}
     timings = {}
+    artifacts = {
+        "train_run_dir": str(run_dir),
+        "weights_used_for_eval": None,
+        "test_eval_dir": None,
+        "test_predictions_dir": None,
+        "submission_zip": None,
+    }
 
+    model_path = params.get("model", DEFAULT_MODEL)
     overall_start = time.perf_counter()
-    logger.info("Loading pretrained YOLO model: %s", DEFAULT_MODEL)
-    model = YOLO(DEFAULT_MODEL)
+    logger.info("Loading pretrained YOLO model: %s", model_path)
+    model = YOLO(model_path)
 
     train_start = time.perf_counter()
     train_kwargs = {
+        **params["train"],
         "data": str(data_config_path),
-        "epochs": params["epochs"],
-        "batch": params["batch_size"],
-        "imgsz": params["img_size"],
         "device": device,
-        "verbose": params.get("verbose", True),
-        "project": str(REPO_ROOT / "runs"),
+        "project": str(RUNS_DIR),
         "name": run_name,
-        "exist_ok": False,
+        "exist_ok": True,
     }
-    if params.get("lr") is not None:
-        train_kwargs["lr0"] = params["lr"]
-    model.train(**train_kwargs)
+    train_results = model.train(**train_kwargs)
+    actual_run_dir = Path(train_results.save_dir).resolve()
+    if actual_run_dir != run_dir:
+        logger.info("Ultralytics save_dir differs from planned run_dir: %s", actual_run_dir)
+        run_dir = actual_run_dir
+        run_metadata["run_dir"] = str(run_dir)
+        run_metadata["run_name"] = run_dir.name
+        artifacts["train_run_dir"] = str(run_dir)
+    effective_run_name = run_dir.name
     timings["training_seconds"] = time.perf_counter() - train_start
     logger.info("Training finished in %.2f seconds", timings["training_seconds"])
 
     best_weights = run_dir / "weights" / "best.pt"
     final_weights = best_weights if best_weights.exists() else run_dir / "weights" / "last.pt"
+    artifacts["weights_used_for_eval"] = str(final_weights)
     logger.info("Using weights for evaluation: %s", final_weights)
 
+    best_validation_metrics = read_best_validation_metrics(run_dir)
+    if best_validation_metrics is not None:
+        logger.info("Best validation metrics: %s", json.dumps(best_validation_metrics, indent=2))
+
     eval_model = YOLO(str(final_weights))
-    eval_start = time.perf_counter()
-    test_metrics = eval_model.val(
-        data=str(data_config_path),
-        split="test",
-        imgsz=params["img_size"],
-        batch=params["batch_size"],
-        device=device,
-        verbose=params.get("verbose", True),
-        project=str(REPO_ROOT / "runs"),
-        name=f"{run_name}_test_eval",
-        exist_ok=True,
-    )
-    timings["test_evaluation_seconds"] = time.perf_counter() - eval_start
-    metrics_summary = extract_metrics(test_metrics)
-    logger.info("Test metrics: %s", json.dumps(metrics_summary, indent=2))
+    test_source = resolve_dataset_split(data_config_path, data_config, "test")
+    logger.info("Resolved test split: %s", test_source)
+
+    if split_has_labels(test_source):
+        eval_start = time.perf_counter()
+        test_eval_dir = RUNS_DIR / f"{effective_run_name}__test-eval"
+        test_metrics = eval_model.val(
+            data=str(data_config_path),
+            split="test",
+            device=device,
+            project=str(RUNS_DIR),
+            name=test_eval_dir.name,
+            exist_ok=True,
+            **params["val"],
+        )
+        timings["test_evaluation_seconds"] = time.perf_counter() - eval_start
+        metrics_summary = extract_metrics(test_metrics)
+        artifacts["test_eval_dir"] = str(test_eval_dir)
+        logger.info("Test metrics: %s", json.dumps(metrics_summary, indent=2))
+    else:
+        metrics_summary = {
+            "precision": None,
+            "recall": None,
+            "mAP50": None,
+            "mAP50-95": None,
+            "fitness": None,
+            "raw": {},
+            "status": "skipped",
+            "reason": f"No label files found for test split at {test_source.parent / 'labels'}",
+        }
+        timings["test_evaluation_seconds"] = 0.0
+        logger.warning("Skipping test metric evaluation: %s", metrics_summary["reason"])
 
     if params.get("export_test_predictions", True):
-        test_source = resolve_dataset_split(data_config_path, data_config, "test")
-        logger.info("Resolved test split for prediction export: %s", test_source)
+        predictions_dir = RUNS_DIR / f"{effective_run_name}__submission"
         predict_start = time.perf_counter()
         eval_model.predict(
             source=str(test_source),
             data=str(data_config_path),
-            imgsz=params["img_size"],
             device=device,
             save=False,
             save_txt=True,
             save_conf=True,
-            project=str(REPO_ROOT / "runs"),
-            name=f"{run_name}_test_predictions",
+            project=str(RUNS_DIR),
+            name=predictions_dir.name,
             exist_ok=True,
-            verbose=params.get("verbose", True),
+            **params["predict"],
         )
         timings["test_prediction_seconds"] = time.perf_counter() - predict_start
-        logger.info(
-            "Saved YOLO-format test predictions with confidences in runs/%s_test_predictions",
-            run_name,
-        )
+        artifacts["test_predictions_dir"] = str(predictions_dir)
+
+        submission_zip = zip_submission(predictions_dir)
+        if submission_zip is not None:
+            artifacts["submission_zip"] = str(submission_zip)
+            logger.info("Submission zip written to: %s", submission_zip)
+
+        logger.info("Saved YOLO-format test predictions in: %s", predictions_dir)
+    else:
+        timings["test_prediction_seconds"] = 0.0
 
     timings["total_seconds"] = time.perf_counter() - overall_start
     timings["total_hours"] = timings["total_seconds"] / 3600.0
@@ -235,24 +451,52 @@ def main():
         "run": run_metadata,
         "timings": timings,
         "sustainability": sustainability,
+        "best_validation_metrics": best_validation_metrics,
         "test_metrics": metrics_summary,
-        "artifacts": {
-            "train_run_dir": str(run_dir),
-            "weights_used_for_eval": str(final_weights),
-            "test_eval_dir": str(REPO_ROOT / "runs" / f"{run_name}_test_eval"),
-            "test_predictions_dir": (
-                str(REPO_ROOT / "runs" / f"{run_name}_test_predictions")
-                if params.get("export_test_predictions", True)
-                else None
-            ),
-        },
+        "artifacts": artifacts,
     }
 
     summary_path = run_dir / "run_summary.json"
     summary_path.write_text(json.dumps(to_builtin(summary), indent=2), encoding="utf-8")
 
+    registry_row = {
+        "run_name": run_metadata["run_name"],
+        "started_at": run_metadata["started_at"],
+        "host": run_metadata["host"],
+        "dataset": dataset_name,
+        "model": Path(model_path).stem,
+        "run_tag": params.get("run_tag", ""),
+        "epochs": params["train"].get("epochs"),
+        "batch_size": params["train"].get("batch"),
+        "img_size": params["train"].get("imgsz"),
+        "lr": params["train"].get("lr0"),
+        "patience": params["train"].get("patience"),
+        "optimizer": params["train"].get("optimizer"),
+        "seed": params["train"].get("seed"),
+        "predict_conf": params["predict"].get("conf"),
+        "predict_iou": params["predict"].get("iou"),
+        "device": device,
+        "training_seconds": timings["training_seconds"],
+        "test_evaluation_seconds": timings["test_evaluation_seconds"],
+        "test_prediction_seconds": timings["test_prediction_seconds"],
+        "total_hours": timings["total_hours"],
+        "val_precision": None if best_validation_metrics is None else best_validation_metrics["precision"],
+        "val_recall": None if best_validation_metrics is None else best_validation_metrics["recall"],
+        "val_mAP50": None if best_validation_metrics is None else best_validation_metrics["mAP50"],
+        "val_mAP50_95": None if best_validation_metrics is None else best_validation_metrics["mAP50-95"],
+        "val_fitness": None if best_validation_metrics is None else best_validation_metrics["fitness"],
+        "test_precision": metrics_summary.get("precision"),
+        "test_recall": metrics_summary.get("recall"),
+        "test_mAP50": metrics_summary.get("mAP50"),
+        "test_mAP50_95": metrics_summary.get("mAP50-95"),
+        "submission_zip": artifacts["submission_zip"],
+        "params_json": json.dumps(to_builtin(params), sort_keys=True),
+    }
+    append_experiment_registry(EXPERIMENT_REGISTRY_PATH, registry_row)
+
     logger.info("Total runtime: %.2f seconds (%.4f hours)", timings["total_seconds"], timings["total_hours"])
     logger.info("Summary written to: %s", summary_path)
+    logger.info("Experiment registry updated: %s", EXPERIMENT_REGISTRY_PATH)
 
 
 if __name__ == "__main__":
