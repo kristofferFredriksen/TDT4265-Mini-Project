@@ -1,0 +1,50 @@
+# Experiment metadata
+model: "yolo26n.pt"
+run_tag: "baseline"
+export_test_predictions: true
+
+# Dataset config
+data_path: "./config/data_roadpoles_v1_cybele.yaml"
+
+# Training hyperparameters
+# Add or change YOLO train() arguments here.
+train:
+  epochs: 200
+  batch: 8
+  imgsz: 1280
+  lr0: 0.001
+  patience: 30
+  optimizer: "auto"
+  weight_decay: 0.0005
+  seed: 0
+  cos_lr: false
+  verbose: true
+
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 0.0
+  translate: 0.1
+  scale: 0.5
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.0
+  copy_paste: 0.0
+  erasing: 0.4
+  close_mosaic: 10
+
+# Validation hyperparameters for labeled splits
+val:
+  batch: 8
+  imgsz: 1280
+  verbose: true
+
+# Prediction / submission hyperparameters
+predict:
+  imgsz: 1280
+  conf: 0.30
+  iou: 0.5
+  verbose: true
