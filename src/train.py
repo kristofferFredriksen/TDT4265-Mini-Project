@@ -19,7 +19,6 @@ DEFAULT_MODEL = "yolo26n.pt"
 RUNS_DIR = REPO_ROOT / "runs"
 EXPERIMENT_REGISTRY_PATH = RUNS_DIR / "experiment_registry.csv"
 
-
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Train and evaluate a YOLO model for snow pole detection."
