@@ -1,0 +1,88 @@
+# Augmentation config for Poles2025 snow pole detection
+#
+# Justified by data analysis (scripts/data_analysis.py):
+#   - Median box width 1.3% of image → very small objects, need scale + copy_paste
+#   - 72% of poles have width < 2%   → copy_paste boosts minority-size instances
+#   - Aspect ratio (w/h) median 0.23 → tall thin objects; flipud=0 always
+#   - 1.23 poles/image (sparse)      → mosaic combines scenes to increase density
+#   - Winter domain: fog, bright snow, low contrast → hsv_v boosted
+#
+# This file has the same schema as yolo_params.yml and can be passed
+# to src/train.py via  --params config/augmentation.yaml
+
+model: "yolo26s"           # small model — best architecture found so far
+run_tag: "aug-tuned"
+export_test_predictions: true
+
+data_path: "./data/combined/roadpoles_v1_plus_iphone/data.yaml"
+
+train:
+  epochs: 150
+  batch: 8
+  imgsz: 960
+  lr0: 0.001
+  lrf: 0.01              # final lr = lr0 * lrf (cosine target)
+  patience: 30
+  optimizer: "AdamW"     # AdamW converges more reliably than SGD for finetuning
+  weight_decay: 0.0005
+  seed: 42
+  cos_lr: true           # cosine annealing — avoids sharp LR drops
+  warmup_epochs: 5       # 5-epoch linear warmup before cosine schedule
+
+  # ---- HSV colour jitter -----------------------------------------------
+  # Poles2025 spans foggy, snowy, sunny, overcast conditions.
+  # hsv_v boosted (0.4→0.5) to simulate fog (dark) and bright snow (light).
+  # hsv_s kept at 0.7 — moderate colour saturation variation.
+  # hsv_h kept low — winter road scenes have limited hue range.
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.5
+
+  # ---- Geometric augmentations -----------------------------------------
+  # Small rotation: road cameras occasionally tilt slightly.
+  # Aggressive scale: poles appear at many distances (near ↔ far).
+  # Translate: poles distributed across full horizontal range (std=0.308).
+  # No shear — poles are vertical; shear would distort the thin-rod shape.
+  # flipud=0 — poles never appear upside down.
+  degrees: 5.0
+  translate: 0.15
+  scale: 0.6
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+
+  # ---- Mosaic / mixing -------------------------------------------------
+  # mosaic=1.0 during most of training: combines 4 images, naturally
+  # increases pole density per batch (from ~1.23 → ~4+ per mosaic tile).
+  # close_mosaic=15: disable mosaic for the final 15 epochs so the model
+  # sees full, undistorted images before evaluation — typically gives +1-2%
+  # mAP at convergence.
+  mosaic: 1.0
+  close_mosaic: 15
+
+  # mixup=0.05: very mild blend of two images. Avoids confusing the model
+  # on thin poles while still adding regularisation.
+  mixup: 0.05
+
+  # copy_paste=0.1: paste extra pole instances from other images.
+  # Especially valuable here because 72% of poles are < 2% image width
+  # (tiny) — copy_paste synthesises more small-pole training examples.
+  copy_paste: 0.1
+
+  # erasing=0.4: random rectangular erase simulates occlusion by snow,
+  # branches, or other road infrastructure — robust to real-world coverage.
+  erasing: 0.4
+
+  verbose: true
+
+val:
+  batch: 8
+  imgsz: 960
+  verbose: true
+
+predict:
+  imgsz: 960
+  conf: 0.30
+  iou: 0.5
+  verbose: true
