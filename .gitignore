@@ -209,4 +209,5 @@ __marimo__/
 
 data/
 runs/
+results/
 yolo26n.pt
