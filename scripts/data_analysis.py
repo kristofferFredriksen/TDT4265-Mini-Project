@@ -18,7 +18,7 @@ import argparse
 from pathlib import Path
 
 import matplotlib
-matplotlib.use("Agg")           # headless backend for cluster use
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
@@ -27,11 +27,6 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ANALYSIS_DIR = REPO_ROOT / "analysis"
-
-
-# ---------------------------------------------------------------------------
-# I/O helpers
-# ---------------------------------------------------------------------------
 
 def load_yaml(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as fh:
@@ -54,7 +49,6 @@ def resolve_split_dirs(data_cfg: dict, data_cfg_path: Path):
         if not images_dir.is_absolute():
             images_dir = (dataset_root / images_dir).resolve()
         labels_dir = images_dir.parent.parent / "labels" if "images" in images_dir.parts else images_dir.parent / "labels"
-        # normalise: replace trailing 'images' folder with 'labels'
         if images_dir.name == "images":
             labels_dir = images_dir.parent / "labels"
         else:
@@ -90,11 +84,6 @@ def count_images(images_dir: Path) -> int:
         return 0
     exts = {".jpg", ".jpeg", ".png", ".bmp", ".tif", ".tiff"}
     return sum(1 for p in images_dir.iterdir() if p.suffix.lower() in exts)
-
-
-# ---------------------------------------------------------------------------
-# Plotting helpers
-# ---------------------------------------------------------------------------
 
 def savefig(fig, name: str):
     ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
@@ -184,7 +173,6 @@ def plot_combined_summary(splits_data: dict, counts: dict):
     colors = {"train": "#2196F3", "val": "#FF9800", "test": "#4CAF50"}
     split_list = list(splits_data.keys())
 
-    # ---- Row 0: width / height / aspect-ratio histograms (span 3 cols each row)
     ax_w   = fig.add_subplot(gs[0, 0])
     ax_h   = fig.add_subplot(gs[0, 1])
     ax_ar  = fig.add_subplot(gs[0, 2])
@@ -214,7 +202,6 @@ def plot_combined_summary(splits_data: dict, counts: dict):
     ax_cnt.set_xticks(x); ax_cnt.set_xticklabels(split_names)
     ax_cnt.set_title("Dataset counts"); ax_cnt.legend(fontsize=7)
 
-    # ---- Row 1: heatmaps for each split (up to 4)
     for col, split in enumerate(split_list[:4]):
         boxes, n_img, _ = splits_data[split]
         ax = fig.add_subplot(gs[1, col])
@@ -230,11 +217,6 @@ def plot_combined_summary(splits_data: dict, counts: dict):
 
     savefig(fig, "summary.png")
 
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
 def main():
     parser = argparse.ArgumentParser(description="Analyse Poles2025 dataset statistics.")
     parser.add_argument(
@@ -247,7 +229,6 @@ def main():
 
     data_cfg_path = args.data.resolve()
     if not data_cfg_path.exists():
-        # fall back to cybele config
         data_cfg_path = REPO_ROOT / "config" / "data_roadpoles_v1_cybele.yaml"
     data_cfg = load_yaml(data_cfg_path)
     print(f"Dataset config : {data_cfg_path}")

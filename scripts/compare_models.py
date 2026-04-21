@@ -38,9 +38,6 @@ RESULTS_DIR = REPO_ROOT / "results"
 RUNS_DIR = REPO_ROOT / "runs"
 COMPARISON_CSV = RESULTS_DIR / "model_comparison.csv"
 
-# Ordered list of (model_name, description) pairs.
-# Each model_name is passed directly to YOLO() — ultralytics downloads weights
-# from hub if not found locally, falling back gracefully on unknown names.
 DEFAULT_MODELS = [
     ("yolo26n",   "YOLO26 Nano   — smallest, fastest; baseline reference"),
     ("yolo26s",   "YOLO26 Small  — best architecture found in earlier runs"),

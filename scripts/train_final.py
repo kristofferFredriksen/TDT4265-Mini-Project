@@ -91,6 +91,8 @@ def main():
     parser.add_argument("--optimizer",    default="AdamW")
     parser.add_argument("--patience",     type=int,   default=30)
     parser.add_argument("--device",       default=None)
+    parser.add_argument("--multi-scale",  action="store_true",
+                        help="Enable Ultralytics multi_scale (broken on torch 2.11 via F.interpolate; off by default).")
     parser.add_argument(
         "--tag", default="final",
         help="Short label appended to the run name for identification.",
@@ -102,7 +104,7 @@ def main():
     print(f"Device  : {device}")
     print(f"Model   : {args.model}")
     print(f"Epochs  : {args.epochs}  |  Patience: {args.patience}")
-    print(f"ImgSz   : {args.imgsz} (multi-scale ±25%)")
+    print(f"ImgSz   : {args.imgsz}  (multi_scale={args.multi_scale})")
     print(f"LR      : {args.lr}  |  WD: {args.weight_decay}  |  Opt: {args.optimizer}")
 
     from ultralytics import YOLO
@@ -118,7 +120,7 @@ def main():
     )
 
     train_kwargs = {
-        # ---- Dataset -------------------------------------------------------
+        # Dataset 
         "data":   str(args.data),
         "device": device,
         "project": str(RUNS_DIR),
@@ -127,7 +129,7 @@ def main():
         "verbose": True,
         "seed":   42,
 
-        # ---- Training schedule --------------------------------------------
+        # Training schedule
         "epochs":        args.epochs,
         "batch":         args.batch,
         "patience":      args.patience,
@@ -138,20 +140,16 @@ def main():
         "warmup_epochs": 5,          # linear warmup prevents instability at start
         "weight_decay":  args.weight_decay,
 
-        # ---- Image size ---------------------------------------------------
-        # multi_scale=True makes Ultralytics randomly resize each batch by
-        # ±50% of imgsz, which is equivalent to training at multiple scales.
-        # This improves robustness to poles appearing at different distances.
         "imgsz":       args.imgsz,
-        "multi_scale": True,
+        "multi_scale": args.multi_scale,
 
-        # ---- Mosaic / close_mosaic ----------------------------------------
+        #  Mosaic / close_mosaic 
         # Turn off mosaic for the final 15 epochs so the model sees full,
-        # unmodified images before evaluation — this typically adds +1-2% mAP.
+        # unmodified images before evaluation
         "mosaic":       1.0,
         "close_mosaic": 15,
 
-        # ---- Augmentation (data-driven from analysis) --------------------
+        # Augmentation (data-driven from analysis)
         "hsv_h": 0.015, "hsv_s": 0.7,  "hsv_v": 0.5,
         "degrees": 5.0, "translate": 0.15, "scale": 0.6,
         "shear": 0.0,   "perspective": 0.0,

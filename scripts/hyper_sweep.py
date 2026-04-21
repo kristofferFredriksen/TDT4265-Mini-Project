@@ -38,7 +38,6 @@ RUNS_DIR = REPO_ROOT / "runs"
 SWEEP_CSV = RESULTS_DIR / "hyper_sweep_summary.csv"
 
 # Sweep grid — 3×2×2×2 = 24 configurations.
-# At 35 epochs each on a single A100 this takes roughly 3–5 h total.
 SWEEP_GRID = {
     "lr0":          [0.001, 0.005, 0.01],
     "weight_decay": [0.0005, 0.001],
@@ -58,7 +57,7 @@ FIXED_AUGMENTATION = {
     "flipud": 0.0,
     "fliplr": 0.5,
     "mosaic": 1.0,
-    "close_mosaic": 10,   # shorter run → close earlier
+    "close_mosaic": 10,   # because shorter run → close earlier
     "mixup": 0.05,
     "copy_paste": 0.1,
     "erasing": 0.4,
@@ -148,7 +147,7 @@ def run_single(
         "weight_decay": weight_decay,
         "optimizer":    optimizer,
         "cos_lr":       cos_lr,
-        "patience":     epochs,   # no early stop in sweep — run full epochs
+        "patience":     epochs,   # no early stop in sweep, run full epochs
         "device":       device,
         "project":      str(RUNS_DIR),
         "name":         run_name,
