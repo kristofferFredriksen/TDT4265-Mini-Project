@@ -234,7 +234,7 @@ def print_comparison_table(rows: list):
 def main():
     parser = argparse.ArgumentParser(description="Compare YOLO architectures on Poles2025.")
     parser.add_argument("--data",   type=Path,
-                        default=REPO_ROOT / "data" / "combined" / "roadpoles_v1_plus_iphone" / "data.yaml")
+                        default=REPO_ROOT / "config" / "data_road_poles_iphone_cybele.yaml")
     parser.add_argument("--models", nargs="+", default=None,
                         help="Subset of model names to run (default: all DEFAULT_MODELS)")
     parser.add_argument("--epochs", type=int,  default=100)
